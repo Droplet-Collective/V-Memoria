@@ -103,10 +103,7 @@ export default function Home() {
 
       {/* Concept */}
       <section className="mx-auto max-w-3xl px-6 py-24 text-center">
-        <h2 className="text-2xl font-black text-slate-800 sm:text-3xl">
-          大人数のためのSNSじゃない。
-        </h2>
-        <p className="mt-6 leading-loose text-slate-500">
+        <p className="leading-loose text-slate-500">
           V-Memoriaは、バーチャル空間での特別な二人組のための、
           <br className="hidden sm:block" />
           <strong className="font-bold text-slate-700">二人専用</strong>
@@ -120,13 +117,10 @@ export default function Home() {
         className="polka-dots bg-gradient-to-b from-white via-memoria-blue-50/40 to-white py-24"
       >
         <div className="mx-auto max-w-6xl px-6">
-          <div className="mb-16 text-center">
+          <div className="mb-12 text-center">
             <p className="text-xs font-bold tracking-widest text-memoria-blue-400">
               FEATURES — MEMORY
             </p>
-            <h2 className="mt-3 text-3xl font-black text-slate-800">
-              4つの機能で、記憶を紡ぐ
-            </h2>
           </div>
 
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
