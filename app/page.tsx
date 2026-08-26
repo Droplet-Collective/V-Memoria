@@ -53,12 +53,14 @@ const heroPhotos: ScatterItem[] = [
   {
     src: "/images/photo-01.webp",
     className:
-      "-left-10 top-[14%] h-28 w-44 -rotate-6 opacity-[0.16] blur-[1px] sm:-left-16 sm:h-48 sm:w-80",
+      "-left-10 top-[14%] h-28 w-44 -rotate-6 sm:-left-16 sm:h-48 sm:w-80",
+    imageClassName: "opacity-[0.16] blur-[1px]",
   },
   {
     src: "/images/photo-03.webp",
     className:
-      "-right-10 bottom-[12%] h-24 w-40 rotate-[7deg] opacity-[0.16] blur-[1px] sm:-right-14 sm:h-44 sm:w-72",
+      "-right-10 bottom-[12%] h-24 w-40 rotate-[7deg] sm:-right-14 sm:h-44 sm:w-72",
+    imageClassName: "opacity-[0.16] blur-[1px]",
   },
 ];
 
@@ -66,13 +68,15 @@ const featurePhotos: ScatterItem[] = [
   {
     src: "/images/photo-04.webp",
     className:
-      "-right-12 top-[3%] h-20 w-32 rotate-[9deg] opacity-[0.13] blur-[1px] sm:-right-16 sm:h-40 sm:w-64",
+      "-right-12 top-[3%] h-20 w-32 rotate-[9deg] sm:-right-16 sm:h-40 sm:w-64",
+    imageClassName: "opacity-[0.13] blur-[1px]",
   },
   {
     src: "/images/photo-02.webp",
     // 暗い写真はそのままだと影のような塊に見えるため、明度を上げてから敷く
     className:
-      "-left-12 bottom-[7%] h-24 w-40 -rotate-[8deg] opacity-[0.14] brightness-[1.7] blur-[1px] sm:-left-16 sm:h-40 sm:w-64",
+      "-left-12 bottom-[7%] h-24 w-40 -rotate-[8deg] sm:-left-16 sm:h-40 sm:w-64",
+    imageClassName: "opacity-[0.14] brightness-[1.7] blur-[1px]",
   },
 ];
 
@@ -80,12 +84,14 @@ const invitePhotos: ScatterItem[] = [
   {
     src: "/images/photo-03.webp",
     className:
-      "-right-12 top-[12%] h-24 w-40 rotate-[5deg] opacity-[0.13] blur-[1px] sm:-right-16 sm:h-40 sm:w-64",
+      "-right-12 top-[12%] h-24 w-40 rotate-[5deg] sm:-right-16 sm:h-40 sm:w-64",
+    imageClassName: "opacity-[0.13] blur-[1px]",
   },
   {
     src: "/images/photo-01.webp",
     className:
-      "-left-12 bottom-[14%] h-20 w-36 -rotate-[6deg] opacity-[0.12] blur-[1px] sm:-left-16 sm:h-36 sm:w-60",
+      "-left-12 bottom-[14%] h-20 w-36 -rotate-[6deg] sm:-left-16 sm:h-36 sm:w-60",
+    imageClassName: "opacity-[0.12] blur-[1px]",
   },
 ];
 
