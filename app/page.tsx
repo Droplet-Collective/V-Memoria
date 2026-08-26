@@ -82,7 +82,7 @@ export default function Home() {
           <p className="mx-auto mt-6 max-w-xl text-balance leading-relaxed text-slate-500">
             会話も、写真も、記念日も。
             <br />
-            二人だけの閉じた空間に、そっと思い出を積み重ねていく空間です。
+            そっと思い出を積み重ねていく、二人だけの閉じた空間です。
           </p>
           <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
             <a
