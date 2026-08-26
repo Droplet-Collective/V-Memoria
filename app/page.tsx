@@ -101,16 +101,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Concept */}
-      <section className="mx-auto max-w-3xl px-6 py-24 text-center">
-        <p className="leading-loose text-slate-500">
-          V-Memoriaは、バーチャル空間での特別な二人組のための、
-          <br className="hidden sm:block" />
-          <strong className="font-bold text-slate-700">二人専用</strong>
-          のWebアプリです。
-        </p>
-      </section>
-
       {/* Features */}
       <section
         id="features"
