@@ -22,9 +22,9 @@ export function PhotoScatter({ items }: { items: ScatterItem[] }) {
       {items.map((item) => (
         <div
           key={item.src + item.className}
-          className={`absolute rounded-[1.4rem] bg-white/70 p-1.5 ${item.className}`}
+          className={`absolute rounded-lg bg-white/70 p-1.5 ${item.className}`}
         >
-          <div className="relative h-full w-full overflow-hidden rounded-[1.1rem]">
+          <div className="relative h-full w-full overflow-hidden rounded-sm">
             <Image
               src={item.src}
               alt=""
