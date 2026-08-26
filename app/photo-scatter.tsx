@@ -11,7 +11,7 @@ export type ScatterItem = {
 /**
  * セクション背景に写真をまばらに散らす装飾レイヤー。
  * 親セクションに relative を付け、このコンポーネントを最初の子に置く。
- * 白い枠線は写真の不透明度に引きずられないよう、外枠側に持たせている。
+ * 白い縁取りは写真の不透明度に引きずられないよう、外側の余白として持たせている。
  */
 export function PhotoScatter({ items }: { items: ScatterItem[] }) {
   return (
@@ -22,15 +22,17 @@ export function PhotoScatter({ items }: { items: ScatterItem[] }) {
       {items.map((item) => (
         <div
           key={item.src + item.className}
-          className={`absolute overflow-hidden rounded-[2rem] border-2 border-white/70 ${item.className}`}
+          className={`absolute rounded-[1.4rem] bg-white/70 p-1.5 ${item.className}`}
         >
-          <Image
-            src={item.src}
-            alt=""
-            fill
-            sizes="(max-width: 640px) 45vw, 340px"
-            className={`object-cover saturate-50 ${item.imageClassName}`}
-          />
+          <div className="relative h-full w-full overflow-hidden rounded-[1.1rem]">
+            <Image
+              src={item.src}
+              alt=""
+              fill
+              sizes="(max-width: 640px) 45vw, 340px"
+              className={`object-cover saturate-50 ${item.imageClassName}`}
+            />
+          </div>
         </div>
       ))}
     </div>
