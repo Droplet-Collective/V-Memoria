@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Photo } from "../photo";
 import { PHOTOS } from "@/lib/asset";
 
@@ -86,7 +87,42 @@ const sinceLabel = (iso: string) => {
   );
 };
 const fmtIso = (iso: string) => iso.replaceAll("-", ".");
-const today = () => new Date().toISOString().slice(0, 10);
+/** ローカル日付を YYYY-MM-DD で返す（UTC の toISOString だと日本時間の朝に日付がずれる） */
+const today = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/** 端末の写真をそのまま保存すると localStorage に収まらないため、長辺 1280px の JPEG に縮小する */
+function shrinkImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const max = 1280;
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        reject(new Error("canvas"));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.82));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("decode"));
+    };
+    img.src = url;
+  });
+}
+
+const PERSIST_ERROR = "保存容量がいっぱいのため、直前の変更を保存できませんでした。写真を減らすと、また保存できるようになります。";
 
 const icons: Record<Tab, React.ReactNode> = {
   sync: <path d="M4 5h16a1 1 0 011 1v9a1 1 0 01-1 1H9l-4 3v-3H4a1 1 0 01-1-1V6a1 1 0 011-1z" />,
@@ -115,25 +151,73 @@ export function DemoApp() {
   const [state, setState] = useState<State | null>(null);
   const [tab, setTab] = useState<Tab>("sync");
   const [toast, setToast] = useState<string | null>(null);
+  const [persistError, setPersistError] = useState(false);
+  // 最後に保存できた状態。保存に失敗したらここへ巻き戻す
+  const lastSaved = useRef<State | null>(null);
+  const stateRef = useRef<State | null>(null);
+  // 返信などの保留中タイマーと、リセット／閉じるで無効化する世代番号
+  const timers = useRef<number[]>([]);
+  const [generation, setGeneration] = useState(0);
+  const genRef = useRef(0);
 
   /* eslint-disable react-hooks/set-state-in-effect -- localStorage は初回描画後にしか読めない */
   useEffect(() => {
+    let initial: State;
     try {
       const raw = localStorage.getItem(KEY);
-      setState(raw ? (JSON.parse(raw) as State) : seed());
+      initial = raw ? (JSON.parse(raw) as State) : seed();
     } catch {
-      setState(seed());
+      initial = seed();
     }
+    lastSaved.current = initial;
+    setState(initial);
   }, []);
   useEffect(() => {
-    if (!state) return;
+    stateRef.current = state;
+    if (!state || state === lastSaved.current) return;
     try {
       localStorage.setItem(KEY, JSON.stringify(state));
+      lastSaved.current = state;
+      setPersistError(false);
     } catch {
-      setToast("保存容量がいっぱいです。写真を減らしてみてください。");
+      setPersistError(true);
+      setState(lastSaved.current);
     }
   }, [state]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  const clearTimers = useCallback(() => {
+    timers.current.forEach((t) => window.clearTimeout(t));
+    timers.current = [];
+    genRef.current += 1;
+    setGeneration(genRef.current);
+  }, []);
+  /** リセット／閉じる後には発火しない setTimeout。閉じられた空間には何も書き込まない */
+  const schedule = useCallback((fn: (safeUpdate: (f: (s: State) => State) => void) => void, ms: number) => {
+    const g = genRef.current;
+    const id = window.setTimeout(() => {
+      timers.current = timers.current.filter((t) => t !== id);
+      if (g !== genRef.current) return;
+      fn((f) => setState((s) => (s && s.sealedAt === null ? f(s) : s)));
+    }, ms);
+    timers.current.push(id);
+  }, []);
+  /** 先に保存を試し、成功したときだけ状態を進める（写真の追加など大きな書き込み用） */
+  const commit = useCallback((fn: (s: State) => State): boolean => {
+    const cur = stateRef.current;
+    if (!cur) return false;
+    const next = fn(cur);
+    try {
+      localStorage.setItem(KEY, JSON.stringify(next));
+    } catch {
+      setPersistError(true);
+      return false;
+    }
+    lastSaved.current = next;
+    setPersistError(false);
+    setState(next);
+    return true;
+  }, []);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 3200);
@@ -143,11 +227,19 @@ export function DemoApp() {
   const update = useCallback((fn: (s: State) => State) => setState((s) => (s ? fn(s) : s)), []);
   const reset = () => {
     if (!confirm("デモの入力内容をすべて消して、最初の状態に戻します。よろしいですか？")) return;
+    clearTimers();
     localStorage.removeItem(KEY);
-    setState(seed());
+    const fresh = seed();
+    lastSaved.current = null;
+    setState(fresh);
+    setPersistError(false);
     setTab("sync");
     setToast("デモをリセットしました");
   };
+  const seal = useCallback(() => {
+    clearTimers();
+    setState((s) => (s ? { ...s, sealedAt: today() } : s));
+  }, [clearTimers]);
 
   if (!state) {
     return (
@@ -159,7 +251,7 @@ export function DemoApp() {
   const sealed = state.sealedAt !== null;
 
   return (
-    <div className={`flex min-h-screen flex-col bg-[#fbf8fa] ${sealed ? "sealed" : ""}`}>
+    <div className="flex min-h-screen flex-col bg-[#fbf8fa]">
       <div className="flex items-center justify-between gap-3 bg-slate-800 px-4 py-2 text-xs text-white">
         <span className="truncate">
           <span className="mr-2 rounded bg-white/15 px-1.5 py-0.5 font-bold">デモモード</span>
@@ -171,7 +263,14 @@ export function DemoApp() {
         </span>
       </div>
 
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col md:flex-row">
+      {persistError && (
+        <div role="alert" className="flex items-center justify-center gap-2 bg-amber-50 px-4 py-2 text-center text-xs text-amber-800 ring-1 ring-amber-200">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
+          {PERSIST_ERROR}
+        </div>
+      )}
+
+      <div className={`mx-auto flex w-full max-w-6xl flex-1 flex-col md:flex-row ${sealed ? "sealed" : ""}`}>
         <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-100 bg-white/60 p-4 md:flex">
           <div className="flex items-center gap-2 px-2 py-2">
             <span className="relative h-6 w-6">
@@ -243,15 +342,15 @@ export function DemoApp() {
           </header>
 
           <div className="flex-1 pb-24 md:pb-0">
-            {tab === "sync" && <Sync state={state} update={update} sealed={sealed} />}
-            {tab === "record" && <Record state={state} update={update} sealed={sealed} toast={setToast} onSync={() => setTab("sync")} />}
+            {tab === "sync" && <Sync key={generation} state={state} update={update} sealed={sealed} schedule={schedule} />}
+            {tab === "record" && <Record state={state} update={update} sealed={sealed} toast={setToast} commit={commit} onSync={() => setTab("sync")} />}
             {tab === "promise" && <PromiseView state={state} update={update} sealed={sealed} />}
-            {tab === "fade" && <Fade state={state} update={update} sealed={sealed} />}
+            {tab === "fade" && <Fade state={state} update={update} sealed={sealed} onSeal={seal} />}
           </div>
         </main>
       </div>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-slate-100 bg-white/90 backdrop-blur md:hidden">
+      <nav className={`fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-slate-100 bg-white/90 backdrop-blur transition-opacity md:hidden ${sealed ? "opacity-60" : ""}`}>
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -278,8 +377,11 @@ export function DemoApp() {
 
 type ViewProps = { state: State; update: (fn: (s: State) => State) => void; sealed: boolean };
 
-function Sync({ state, update, sealed }: ViewProps) {
+type Schedule = (fn: (safeUpdate: (f: (s: State) => State) => void) => void, ms: number) => void;
+
+function Sync({ state, update, sealed, schedule }: ViewProps & { schedule: Schedule }) {
   const [text, setText] = useState("");
+  const [query, setQuery] = useState("");
   const [typing, setTyping] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const replyIdx = useRef(0);
@@ -294,30 +396,32 @@ function Sync({ state, update, sealed }: ViewProps) {
     const id = uid();
     update((s) => ({ ...s, messages: [...s.messages, { id, me: true, text: t, at: Date.now() }] }));
     setText("");
-    setTimeout(() => {
-      update((s) => ({ ...s, messages: s.messages.map((m) => (m.id === id ? { ...m, read: true } : m)) }));
+    schedule((safe) => {
+      safe((s) => ({ ...s, messages: s.messages.map((m) => (m.id === id ? { ...m, read: true } : m)) }));
       setTyping(true);
     }, 500);
     const delay = 800 + Math.random() * 1200;
-    setTimeout(() => {
+    schedule((safe) => {
       setTyping(false);
       const reply = REPLIES[replyIdx.current++ % REPLIES.length];
-      update((s) => ({ ...s, messages: [...s.messages, { id: uid(), me: false, text: reply, at: Date.now(), read: true }] }));
+      safe((s) => ({ ...s, messages: [...s.messages, { id: uid(), me: false, text: reply, at: Date.now(), read: true }] }));
       if (Math.random() < 1 / 3) {
-        setTimeout(() => setTyping(true), 400);
-        setTimeout(() => {
+        schedule(() => setTyping(true), 400);
+        schedule((safe2) => {
           setTyping(false);
           const second = FOLLOWUPS[Math.floor(Math.random() * FOLLOWUPS.length)];
-          update((s) => ({ ...s, messages: [...s.messages, { id: uid(), me: false, text: second, at: Date.now(), read: true }] }));
+          safe2((s) => ({ ...s, messages: [...s.messages, { id: uid(), me: false, text: second, at: Date.now(), read: true }] }));
         }, 400 + 900 + Math.random() * 800);
       }
     }, 500 + delay);
   };
 
+  const q = query.trim();
   const rows = useMemo(() => {
     const out: (Msg | { sep: string })[] = [];
     let last = "";
-    for (const m of state.messages) {
+    const source = q ? state.messages.filter((m) => m.text.includes(q)) : state.messages;
+    for (const m of source) {
       const d = fmtDate(m.at);
       if (d !== last) {
         out.push({ sep: d });
@@ -326,11 +430,44 @@ function Sync({ state, update, sealed }: ViewProps) {
       out.push(m);
     }
     return out;
-  }, [state.messages]);
+  }, [state.messages, q]);
+
+  const highlight = (text: string) => {
+    if (!q) return text;
+    const parts = text.split(q);
+    return parts.map((part, i) => (
+      <span key={i}>
+        {part}
+        {i < parts.length - 1 && <mark className="rounded bg-amber-200/80 px-0.5 text-inherit">{q}</mark>}
+      </span>
+    ));
+  };
 
   return (
     <div className="flex h-[calc(100dvh-8.5rem)] flex-col md:h-[calc(100dvh-7rem)]">
+      <div className="flex items-center gap-2 border-b border-slate-100 bg-white/60 px-4 py-2 sm:px-6">
+        <svg viewBox="0 0 20 20" className="h-4 w-4 shrink-0 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="9" cy="9" r="5.5" /><path d="M13 13l4 4" /></svg>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="会話を検索"
+          aria-label="会話を検索"
+          className="flex-1 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400 [&::-webkit-search-cancel-button]:hidden"
+        />
+        {q && (
+          <>
+            <span className="text-[11px] text-slate-400">{rows.filter((r) => !("sep" in r)).length} 件</span>
+            <button type="button" onClick={() => setQuery("")} aria-label="検索を消す" className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+              <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 5l10 10M15 5L5 15" /></svg>
+            </button>
+          </>
+        )}
+      </div>
       <div className="scrollbar-thin flex-1 space-y-2.5 overflow-y-auto px-4 py-5 sm:px-6">
+        {q && rows.length === 0 && (
+          <p className="py-16 text-center text-sm text-slate-400">「{q}」を含む会話はありません。</p>
+        )}
         {rows.map((r) =>
           "sep" in r ? (
             <div key={r.sep} className="flex items-center gap-3 py-2">
@@ -346,7 +483,7 @@ function Sync({ state, update, sealed }: ViewProps) {
                   r.me ? "rounded-br-md bg-gradient-to-br from-memoria-pink-300 to-memoria-pink-400 text-white" : "rounded-bl-md bg-white text-slate-700 ring-1 ring-slate-100"
                 }`}
               >
-                {r.text}
+                {highlight(r.text)}
               </div>
               <div className="flex flex-col items-end text-[10px] leading-tight text-slate-400">
                 {r.me && r.read && <span>既読</span>}
@@ -400,9 +537,22 @@ function Sync({ state, update, sealed }: ViewProps) {
   );
 }
 
-function Record({ state, update, sealed, toast, onSync }: ViewProps & { toast: (t: string) => void; onSync: () => void }) {
+function Record({
+  state,
+  update,
+  sealed,
+  toast,
+  commit,
+  onSync,
+}: ViewProps & { toast: (t: string) => void; commit: (fn: (s: State) => State) => boolean; onSync: () => void }) {
   const [open, setOpen] = useState<number | null>(null);
+  const [order, setOrder] = useState<"new" | "old">("new");
   const [pending, setPending] = useState<{ src: string } | null>(null);
+  const [reading, setReading] = useState(false);
+  const photos = useMemo(
+    () => [...state.photos].sort((a, b) => (order === "new" ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date))),
+    [state.photos, order],
+  );
   const [caption, setCaption] = useState("");
   const [date, setDate] = useState(today());
   const fileRef = useRef<HTMLInputElement>(null);
@@ -411,31 +561,51 @@ function Record({ state, update, sealed, toast, onSync }: ViewProps & { toast: (
     if (open === null) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(null);
-      if (e.key === "ArrowRight") setOpen((i) => (i === null ? i : (i + 1) % state.photos.length));
-      if (e.key === "ArrowLeft") setOpen((i) => (i === null ? i : (i - 1 + state.photos.length) % state.photos.length));
+      if (e.key === "ArrowRight") setOpen((i) => (i === null ? i : (i + 1) % photos.length));
+      if (e.key === "ArrowLeft") setOpen((i) => (i === null ? i : (i - 1 + photos.length) % photos.length));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, state.photos.length]);
+  }, [open, photos.length]);
 
-  const pick = (f: File | undefined) => {
+  const pick = async (f: File | undefined) => {
+    // 同じファイルをもう一度選んでも onChange が鳴るように、読み取ったらすぐ値を空にする
+    if (fileRef.current) fileRef.current.value = "";
     if (!f) return;
-    if (f.size > 1.5 * 1024 * 1024) {
-      toast("1.5MB までの画像をお選びください（デモのため容量を抑えています）");
+    if (!f.type.startsWith("image/")) {
+      toast("画像ファイルをお選びください");
       return;
     }
-    const r = new FileReader();
-    r.onload = () => setPending({ src: String(r.result) });
-    r.readAsDataURL(f);
+    setReading(true);
+    try {
+      const src = await shrinkImage(f);
+      if (src.length > 1.5 * 1024 * 1024) {
+        toast("縮小しても 1.5MB を超えてしまいました。別の写真をお試しください");
+        return;
+      }
+      setPending({ src });
+    } catch {
+      toast("この画像は読み込めませんでした");
+    } finally {
+      setReading(false);
+    }
+  };
+  const dismiss = () => {
+    setPending(null);
+    if (fileRef.current) fileRef.current.value = "";
   };
   const add = (e: React.FormEvent) => {
     e.preventDefault();
     if (!pending) return;
-    update((s) => ({
+    const ok = commit((s) => ({
       ...s,
       photos: [{ id: uid(), src: pending.src, world: caption.trim() || "名もない場所", date: fmtIso(date) }, ...s.photos],
     }));
-    setPending(null);
+    if (!ok) {
+      toast("保存容量がいっぱいで、この写真は追加できませんでした");
+      return;
+    }
+    dismiss();
     setCaption("");
     toast("写真を追加しました");
   };
@@ -456,10 +626,11 @@ function Record({ state, update, sealed, toast, onSync }: ViewProps & { toast: (
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => pick(e.target.files?.[0])} />
             <button
               type="button"
+              disabled={reading}
               onClick={() => fileRef.current?.click()}
-              className="rounded-full bg-slate-800 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-700"
+              className="rounded-full bg-slate-800 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-700 disabled:opacity-50"
             >
-              ＋ 写真を追加
+              {reading ? "読み込み中…" : "＋ 写真を追加"}
             </button>
           </>
         )}
@@ -487,10 +658,32 @@ function Record({ state, update, sealed, toast, onSync }: ViewProps & { toast: (
             </label>
             <div className="mt-auto flex gap-2">
               <button type="submit" className="rounded-full bg-memoria-blue-400 px-5 py-2 text-sm font-bold text-white hover:bg-memoria-blue-500">アルバムに入れる</button>
-              <button type="button" onClick={() => setPending(null)} className="rounded-full px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">やめる</button>
+              <button type="button" onClick={dismiss} className="rounded-full px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100">やめる</button>
             </div>
           </div>
         </form>
+      )}
+
+      {state.photos.length > 0 && (
+        <div className="mb-3 flex items-center justify-between text-xs text-slate-400">
+          <span>{state.photos.length} 枚</span>
+          <div className="flex rounded-full bg-white p-0.5 ring-1 ring-slate-100" role="group" aria-label="並び順">
+            {(["new", "old"] as const).map((o) => (
+              <button
+                key={o}
+                type="button"
+                aria-pressed={order === o}
+                onClick={() => {
+                  setOrder(o);
+                  setOpen(null);
+                }}
+                className={`rounded-full px-3 py-1 font-bold transition ${order === o ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-700"}`}
+              >
+                {o === "new" ? "新しい順" : "古い順"}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
 
       {state.photos.length === 0 ? (
@@ -499,7 +692,7 @@ function Record({ state, update, sealed, toast, onSync }: ViewProps & { toast: (
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {state.photos.map((p, i) => (
+          {photos.map((p, i) => (
             <button
               key={p.id}
               type="button"
@@ -518,37 +711,38 @@ function Record({ state, update, sealed, toast, onSync }: ViewProps & { toast: (
         </div>
       )}
 
-      {open !== null && state.photos[open] && (
+      {open !== null && photos[open] && createPortal(
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-900/85 p-4 backdrop-blur-sm" onClick={() => setOpen(null)} role="dialog" aria-modal="true">
-          <button type="button" aria-label="前の写真" onClick={(e) => { e.stopPropagation(); setOpen((open - 1 + state.photos.length) % state.photos.length); }} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-3 text-white hover:bg-white/20 sm:left-8">
+          <button type="button" aria-label="前の写真" onClick={(e) => { e.stopPropagation(); setOpen((open - 1 + photos.length) % photos.length); }} className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-3 text-white hover:bg-white/20 sm:left-8">
             <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 4l-6 6 6 6" /></svg>
           </button>
           <figure className="max-w-4xl animate-pop" onClick={(e) => e.stopPropagation()}>
             <div className="overflow-hidden rounded-2xl bg-black">
-              <Photo src={state.photos[open].src} dark={state.photos[open].dark} className="max-h-[70vh] w-auto object-contain" />
+              <Photo src={photos[open].src} dark={photos[open].dark} className="max-h-[70vh] w-auto object-contain" />
             </div>
             <figcaption className="mt-3 flex items-center justify-between text-white">
               <div>
-                <p className="font-bold">{state.photos[open].world}</p>
-                <p className="font-mono text-xs text-slate-300">{state.photos[open].date} · {open + 1} / {state.photos.length}</p>
+                <p className="font-bold">{photos[open].world}</p>
+                <p className="font-mono text-xs text-slate-300">{photos[open].date} · {open + 1} / {photos.length}</p>
               </div>
               <div className="flex items-center gap-4 text-xs">
                 {!sealed && (
                   <button type="button" onClick={onSync} className="rounded-full bg-white/10 px-3 py-1.5 font-bold text-white hover:bg-white/20">Sync で話す →</button>
                 )}
                 {!sealed && (
-                  <button type="button" onClick={() => remove(state.photos[open].id)} className="text-slate-300 underline-offset-2 hover:underline">削除</button>
+                  <button type="button" onClick={() => remove(photos[open].id)} className="text-slate-300 underline-offset-2 hover:underline">削除</button>
                 )}
               </div>
             </figcaption>
           </figure>
-          <button type="button" aria-label="次の写真" onClick={(e) => { e.stopPropagation(); setOpen((open + 1) % state.photos.length); }} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-3 text-white hover:bg-white/20 sm:right-8">
+          <button type="button" aria-label="次の写真" onClick={(e) => { e.stopPropagation(); setOpen((open + 1) % photos.length); }} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-3 text-white hover:bg-white/20 sm:right-8">
             <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 4l6 6-6 6" /></svg>
           </button>
           <button type="button" aria-label="閉じる" onClick={() => setOpen(null)} className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20">
             <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 5l10 10M15 5L5 15" /></svg>
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -653,10 +847,10 @@ function PromiseView({ state, update, sealed }: ViewProps) {
   );
 }
 
-function Fade({ state, update, sealed }: ViewProps) {
+function Fade({ state, update, sealed, onSeal }: ViewProps & { onSeal: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const seal = () => {
-    update((s) => ({ ...s, sealedAt: today() }));
+    onSeal();
     setConfirming(false);
   };
   return (
