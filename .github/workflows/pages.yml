@@ -1,8 +1,10 @@
 name: Deploy to GitHub Pages
 
+# Pages を Settings → Pages → Source「GitHub Actions」で有効化するまでは手動実行のみ。
+# 有効化後に自動デプロイへ戻すときは、以下を on: に追加する:
+#   push:
+#     branches: [main]
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

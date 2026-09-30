@@ -110,6 +110,9 @@ function shrinkImage(file: File): Promise<string> {
         reject(new Error("canvas"));
         return;
       }
+      // JPEG は透過を持てないため、透過 PNG/WebP が黒く潰れないよう白で下地を敷く
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
       resolve(canvas.toDataURL("image/jpeg", 0.82));
@@ -148,13 +151,19 @@ function Avatar({ tone, size = "h-7 w-7" }: { tone: "pink" | "blue"; size?: stri
 }
 
 export function DemoApp() {
-  const [state, setState] = useState<State | null>(null);
+  const [state, setRawState] = useState<State | null>(null);
   const [tab, setTab] = useState<Tab>("sync");
   const [toast, setToast] = useState<string | null>(null);
   const [persistError, setPersistError] = useState(false);
   // 最後に保存できた状態。保存に失敗したらここへ巻き戻す
   const lastSaved = useRef<State | null>(null);
+  // 常に最新の状態を同期的に持つ ref。commit() が古いスナップショットを保存しないようにする
   const stateRef = useRef<State | null>(null);
+  const setState = useCallback((next: State | null | ((prev: State | null) => State | null)) => {
+    const resolved = typeof next === "function" ? next(stateRef.current) : next;
+    stateRef.current = resolved;
+    setRawState(resolved);
+  }, []);
   // 返信などの保留中タイマーと、リセット／閉じるで無効化する世代番号
   const timers = useRef<number[]>([]);
   const [generation, setGeneration] = useState(0);
@@ -171,9 +180,8 @@ export function DemoApp() {
     }
     lastSaved.current = initial;
     setState(initial);
-  }, []);
+  }, [setState]);
   useEffect(() => {
-    stateRef.current = state;
     if (!state || state === lastSaved.current) return;
     try {
       localStorage.setItem(KEY, JSON.stringify(state));
@@ -183,7 +191,7 @@ export function DemoApp() {
       setPersistError(true);
       setState(lastSaved.current);
     }
-  }, [state]);
+  }, [state, setState]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const clearTimers = useCallback(() => {
@@ -201,7 +209,7 @@ export function DemoApp() {
       fn((f) => setState((s) => (s && s.sealedAt === null ? f(s) : s)));
     }, ms);
     timers.current.push(id);
-  }, []);
+  }, [setState]);
   /** 先に保存を試し、成功したときだけ状態を進める（写真の追加など大きな書き込み用） */
   const commit = useCallback((fn: (s: State) => State): boolean => {
     const cur = stateRef.current;
@@ -217,14 +225,14 @@ export function DemoApp() {
     setPersistError(false);
     setState(next);
     return true;
-  }, []);
+  }, [setState]);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 3200);
     return () => clearTimeout(t);
   }, [toast]);
 
-  const update = useCallback((fn: (s: State) => State) => setState((s) => (s ? fn(s) : s)), []);
+  const update = useCallback((fn: (s: State) => State) => setState((s) => (s ? fn(s) : s)), [setState]);
   const reset = () => {
     if (!confirm("デモの入力内容をすべて消して、最初の状態に戻します。よろしいですか？")) return;
     clearTimers();
@@ -239,7 +247,7 @@ export function DemoApp() {
   const seal = useCallback(() => {
     clearTimers();
     setState((s) => (s ? { ...s, sealedAt: today() } : s));
-  }, [clearTimers]);
+  }, [clearTimers, setState]);
 
   if (!state) {
     return (

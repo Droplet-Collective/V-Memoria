@@ -30,5 +30,9 @@ npm run build    # out/ に静的ファイルを出力（basePath は /V-Memoria
 
 ## デプロイ
 
-`main` への push で `.github/workflows/pages.yml` が `out/` を GitHub Pages にデプロイします。
-初回のみ、リポジトリの **Settings → Pages → Build and deployment → Source** を「**GitHub Actions**」に切り替えてください。
+`.github/workflows/pages.yml` が `out/` を GitHub Pages にデプロイします。Pages を有効化するまでワークフローが赤くならないよう、現在は **手動実行（workflow_dispatch）のみ** です。
+
+公開手順:
+
+1. リポジトリの **Settings → Pages → Build and deployment → Source** を「**GitHub Actions**」に切り替える
+2. Actions タブから「Deploy to GitHub Pages」を手動実行する。`main` への push で自動デプロイしたい場合は、ワークフローのコメントにある `push: branches: [main]` を `on:` に戻す
