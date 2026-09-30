@@ -46,7 +46,7 @@ function seed(): State {
     photos: PHOTOS.map((p) => ({ id: uid(), ...p })),
     anniversaries: [
       { id: uid(), title: "出会った日", date: "2025-08-15" },
-      { id: uid(), title: "空間が生まれた日", date: "2025-10-03" },
+      { id: uid(), title: "空間が生まれた日", date: "2025-10-02" },
     ],
     promises: [
       { id: uid(), title: "次の満月の夜、また展望台へ", done: false },
@@ -68,11 +68,23 @@ const REPLIES = [
   "おやすみの前に、もう一回だけ話そ",
 ];
 
+const FOLLOWUPS = ["あ、あとね", "写真も撮ろうね", "今夜、少しだけ話せる？", "…ありがとう", "楽しみにしてる"];
+
 const fmtTime = (t: number) =>
   new Date(t).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
 const fmtDate = (t: number) =>
   new Date(t).toLocaleDateString("ja-JP", { month: "long", day: "numeric", weekday: "short" });
 const daysSince = (iso: string) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / day));
+const sinceLabel = (iso: string) => {
+  const n = daysSince(iso);
+  return n === 0 ? (
+    <span className="font-display text-xl text-memoria-pink-500">今日</span>
+  ) : (
+    <>
+      あれから <span className="font-display text-2xl text-memoria-pink-500">{n}</span> 日
+    </>
+  );
+};
 const fmtIso = (iso: string) => iso.replaceAll("-", ".");
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -188,7 +200,23 @@ export function DemoApp() {
               </button>
             ))}
           </nav>
-          <p className="mt-auto px-2 text-[11px] leading-relaxed text-slate-400">
+          <div className="mt-6 rounded-2xl bg-white/70 p-4 ring-1 ring-slate-100">
+            <p className="text-[10px] font-bold tracking-widest text-slate-400">この空間</p>
+            <dl className="mt-2 space-y-1.5 text-xs text-slate-500">
+              <div className="flex justify-between gap-2">
+                <dt className="whitespace-nowrap">生まれた日</dt>
+                <dd className="font-mono text-slate-600">2025.10.02</dd>
+              </div>
+              <div className="flex justify-between gap-2">
+                <dt>あれから</dt>
+                <dd className="font-bold text-memoria-pink-500">{daysSince("2025-10-02")}日</dd>
+              </div>
+              <div className="flex justify-between gap-2"><dt>メンバー</dt><dd className="text-slate-600">2</dd></div>
+              <div className="flex justify-between gap-2"><dt>写真</dt><dd className="text-slate-600">{state.photos.length}枚</dd></div>
+              <div className="flex justify-between gap-2"><dt>約束</dt><dd className="text-slate-600">{state.promises.length}件</dd></div>
+            </dl>
+          </div>
+          <p className="mt-auto px-2 pt-6 text-[11px] leading-relaxed text-slate-400">
             v1.4 · デモ空間<br />ふたりだけの記憶の場所
           </p>
         </aside>
@@ -216,7 +244,7 @@ export function DemoApp() {
 
           <div className="flex-1 pb-24 md:pb-0">
             {tab === "sync" && <Sync state={state} update={update} sealed={sealed} />}
-            {tab === "record" && <Record state={state} update={update} sealed={sealed} toast={setToast} />}
+            {tab === "record" && <Record state={state} update={update} sealed={sealed} toast={setToast} onSync={() => setTab("sync")} />}
             {tab === "promise" && <PromiseView state={state} update={update} sealed={sealed} />}
             {tab === "fade" && <Fade state={state} update={update} sealed={sealed} />}
           </div>
@@ -275,6 +303,14 @@ function Sync({ state, update, sealed }: ViewProps) {
       setTyping(false);
       const reply = REPLIES[replyIdx.current++ % REPLIES.length];
       update((s) => ({ ...s, messages: [...s.messages, { id: uid(), me: false, text: reply, at: Date.now(), read: true }] }));
+      if (Math.random() < 1 / 3) {
+        setTimeout(() => setTyping(true), 400);
+        setTimeout(() => {
+          setTyping(false);
+          const second = FOLLOWUPS[Math.floor(Math.random() * FOLLOWUPS.length)];
+          update((s) => ({ ...s, messages: [...s.messages, { id: uid(), me: false, text: second, at: Date.now(), read: true }] }));
+        }, 400 + 900 + Math.random() * 800);
+      }
     }, 500 + delay);
   };
 
@@ -327,6 +363,7 @@ function Sync({ state, update, sealed }: ViewProps) {
                 <span key={i} className="h-1.5 w-1.5 animate-blink rounded-full bg-slate-400" style={{ animationDelay: `${i * 0.2}s` }} />
               ))}
             </div>
+            <span className="text-[10px] text-slate-400">こはる が入力中…</span>
           </div>
         )}
         <div ref={endRef} />
@@ -363,7 +400,7 @@ function Sync({ state, update, sealed }: ViewProps) {
   );
 }
 
-function Record({ state, update, sealed, toast }: ViewProps & { toast: (t: string) => void }) {
+function Record({ state, update, sealed, toast, onSync }: ViewProps & { toast: (t: string) => void; onSync: () => void }) {
   const [open, setOpen] = useState<number | null>(null);
   const [pending, setPending] = useState<{ src: string } | null>(null);
   const [caption, setCaption] = useState("");
@@ -495,9 +532,14 @@ function Record({ state, update, sealed, toast }: ViewProps & { toast: (t: strin
                 <p className="font-bold">{state.photos[open].world}</p>
                 <p className="font-mono text-xs text-slate-300">{state.photos[open].date} · {open + 1} / {state.photos.length}</p>
               </div>
-              {!sealed && (
-                <button type="button" onClick={() => remove(state.photos[open].id)} className="text-xs text-slate-300 underline-offset-2 hover:underline">削除</button>
-              )}
+              <div className="flex items-center gap-4 text-xs">
+                {!sealed && (
+                  <button type="button" onClick={onSync} className="rounded-full bg-white/10 px-3 py-1.5 font-bold text-white hover:bg-white/20">Sync で話す →</button>
+                )}
+                {!sealed && (
+                  <button type="button" onClick={() => remove(state.photos[open].id)} className="text-slate-300 underline-offset-2 hover:underline">削除</button>
+                )}
+              </div>
             </figcaption>
           </figure>
           <button type="button" aria-label="次の写真" onClick={(e) => { e.stopPropagation(); setOpen((open + 1) % state.photos.length); }} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/10 p-3 text-white hover:bg-white/20 sm:right-8">
@@ -547,9 +589,7 @@ function PromiseView({ state, update, sealed }: ViewProps) {
                 <p className="font-mono text-[11px] text-slate-400">{fmtIso(a.date)}</p>
               </div>
               <div className="flex items-center gap-3">
-                <p className="text-xs font-bold text-slate-500">
-                  あれから <span className="font-display text-2xl text-memoria-pink-500">{daysSince(a.date)}</span> 日
-                </p>
+                <p className="text-xs font-bold text-slate-500">{sinceLabel(a.date)}</p>
                 {!sealed && (
                   <button type="button" aria-label="削除" onClick={() => update((s) => ({ ...s, anniversaries: s.anniversaries.filter((x) => x.id !== a.id) }))} className="text-slate-300 hover:text-slate-500">
                     <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 5l10 10M15 5L5 15" /></svg>
@@ -563,7 +603,7 @@ function PromiseView({ state, update, sealed }: ViewProps) {
           <form onSubmit={addA} className="mt-4 flex flex-col gap-2 rounded-2xl border border-dashed border-memoria-pink-200 p-4 sm:flex-row">
             <input value={aTitle} onChange={(e) => setATitle(e.target.value)} placeholder="大切な日の名前" aria-label="記念日の名前" className={`${inputCls} flex-1`} />
             <input type="date" value={aDate} max={today()} onChange={(e) => setADate(e.target.value)} aria-label="日付" className={inputCls} />
-            <button type="submit" disabled={!aTitle.trim()} className="rounded-xl bg-memoria-pink-400 px-4 py-2 text-sm font-bold text-white hover:bg-memoria-pink-500 disabled:opacity-40">追加</button>
+            <button type="submit" disabled={!aTitle.trim()} className="whitespace-nowrap rounded-xl bg-memoria-pink-400 px-4 py-2 text-sm font-bold text-white hover:bg-memoria-pink-500 disabled:opacity-40">追加</button>
           </form>
         )}
       </section>
@@ -605,7 +645,7 @@ function PromiseView({ state, update, sealed }: ViewProps) {
           <form onSubmit={addP} className="mt-4 flex flex-col gap-2 rounded-2xl border border-dashed border-memoria-blue-200 p-4 sm:flex-row">
             <input value={pTitle} onChange={(e) => setPTitle(e.target.value)} placeholder="これからの約束" aria-label="約束" className={`${inputCls} flex-1`} />
             <input type="date" value={pDate} onChange={(e) => setPDate(e.target.value)} aria-label="日付（任意）" className={inputCls} />
-            <button type="submit" disabled={!pTitle.trim()} className="rounded-xl bg-memoria-blue-400 px-4 py-2 text-sm font-bold text-white hover:bg-memoria-blue-500 disabled:opacity-40">追加</button>
+            <button type="submit" disabled={!pTitle.trim()} className="whitespace-nowrap rounded-xl bg-memoria-blue-400 px-4 py-2 text-sm font-bold text-white hover:bg-memoria-blue-500 disabled:opacity-40">追加</button>
           </form>
         )}
       </section>
